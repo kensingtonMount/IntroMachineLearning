@@ -1,0 +1,286 @@
+%Neural Network
+clc;clear;
+
+%%
+prompt = ['Which dataset do you wish to open?',...
+         '\nChoose from the following:',...
+         '\n1. White wine;'...
+         '\n2. Red wine;'...
+         '\nAnd your choice is:'];
+str = input(prompt,'s');
+switch str
+    case '1'
+        FileName = 'winequality-white.csv';
+    case '2'
+        FileName = 'winequality-red.csv';
+end
+
+fid = fopen(FileName, 'r');
+if fid == -1, error('Cannot read file: %s', FileName); end
+fgetl(fid);  % Skip first line
+data = fscanf(fid, '%f; %f; %f; %f; %f; %f; %f; %f; %f; %f; %f; %f', [12, inf]).';
+fclose(fid);
+
+%Normalize the data
+data_raw = data;
+for l = 1:size(data,2)
+    for m = 1:size(data,1)
+    data(m,l) = (data(m,l) - mean(data(:,l)))/std(data(:,l));
+    end
+end
+
+%Categorize all data
+fixedAcidity = data(1:end,1);
+volatileAcidity = data(1:end,2);
+citricAcid = data(1:end,3);
+residualSugar = data(1:end,4);
+chlorides = data(1:end,5);
+freeSulfurDioxide = data(1:end,6);
+totalSulfurDioxide = data(1:end,7);
+density = data(1:end,8);
+pH = data(1:end,9);
+sulphates = data(1:end,10);
+alcohol = data(1:end,11);
+quality = data_raw(1:end,12);
+
+idx_rand = randperm(numel(quality));
+idx_training = idx_rand(1:round(numel(quality)*.8));
+%Put the rest 20% data as test data
+idx_test = idx_rand(round(numel(quality)*.8)+1:end);
+
+working_predictors = data(:,1:11);
+%working_predictors = [volatileAcidity residualSugar freeSulfurDioxide sulphates alcohol chlorides pH];
+
+nn_train_input = working_predictors(idx_training,:)';
+%We need to convert the output quality data from 3 to 9 to a matrix with 1
+%indicating the level they are in
+nn_train_output = zeros(max(quality) - min(quality) + 1,numel(idx_training));
+for i = 1:numel(idx_training)
+    nn_train_output(quality(idx_training(i))-2,i) = 1;
+end
+%Also convert the quality of test data into a matrix
+nn_test_quality = zeros(max(quality) - min(quality) + 1,numel(idx_test));
+for j = 1:numel(idx_test)
+    nn_test_quality(quality(idx_test(j))-2,j) = 1;
+end
+
+
+%%
+%Neural Networks with backpropagation
+%Set the "random" initial weights to avoid getting slightly different
+%results every time it runs
+setdemorandstream(391418381)
+
+if 0
+trainFcn = 'trainscg'; %scaled conjugate gradient backprop
+
+net = patternnet(10);
+%Setup training, validation, and testing datasets from raw dataset
+%net.divideParam.trainRatio = .7;
+%net.divideParam.valRatio = .15;
+%net.divideParam.testRatio = .15;
+
+%Train the network with backprop
+
+%net = configure(net,nn_train_input,nn_train_output);view(net);
+[net,tr] = train(net,nn_train_input,nn_train_output);
+%nntraintool
+%plotperform(tr)
+
+%Test the network
+test_output = net(working_predictors(idx_test,:)');
+e = gsubtract(nn_test_quality,test_output);
+performance = perform(net,nn_test_quality,test_output);
+
+%test_output = net(working_predictors(idx_test,:)');
+testIndices = vec2ind(test_output);
+end
+% figure;
+% plotconfusion(nn_test_quality,test_output);
+% 
+% [c,cm] = confusion(nn_test_quality,test_output)
+
+% fprintf('Percentage Correct Classification   : %f%%\n', 100*(1-c));
+% fprintf('Percentage Incorrect Classification : %f%%\n', 100*c);
+
+%%
+%random hill climbing
+% inputs for the neural net
+hc_input = nn_train_input;
+% targets for the neural net
+hc_target = nn_test_quality;
+%Set the "random" initial weights to avoid getting slightly different
+%results every time it runs
+setdemorandstream(391418381)
+
+%%
+%Implementing hill climbing algorithm
+if 0
+rng('default');
+notBestWeight = 1;
+maxEpoch = 5000;
+stepsizeFactor = 1e-1;
+stepLimit = 1e-1;
+C = normrnd(1,1); %Gaussian r.v., Cauchy r.v.
+%Randomly initialize the weights for the neural network
+%net = init(net);
+weightMat = [net.IW net.LW];
+testIndices = vec2ind(test_output);
+qualIndices = vec2ind(nn_test_quality);
+rmse = sqrt(mean((qualIndices(:) - testIndices(:)).^2));
+iter = 0;
+while notBestWeight && iter <= maxEpoch
+    stepSize = C*(stepsizeFactor*min(rmse,1) + stepLimit);
+    dNW = C*stepSize;
+    weightMat_new = cellfun(@(x) x+dNW,weightMat,'un',0);
+    trainFcn = '';
+    net.IW = weightMat_new(:,1);
+    net.LW = weightMat_new(:,2:end);
+    net =  patternnet(10);
+    net = configure(net,nn_train_input,nn_train_output);
+    test_output = net(working_predictors(idx_test,:)');
+    testIndices = vec2ind(test_output);
+    qualIndices = vec2ind(nn_test_quality);
+    rmse_new = sqrt(mean((qualIndices(:) - testIndices(:)).^2));
+    delta = abs(rmse_new - rmse);
+    % create handle to the MSE_TEST function, that
+    % calculates MSE
+    %h = @(x) mse_test(x, net, nn_train_input, nn_test_quality);
+    
+    if delta < 5e-2
+        weightMat = weightMat_new;
+        rmse = rmse_new;
+        [c,cm] = confusion(nn_test_quality,test_output)
+        
+        fprintf('Percentage Correct Classification   : %f%%\n', 100*(1-c));
+        fprintf('Percentage Incorrect Classification : %f%%\n', 100*c);
+        %if rmse < 1e-2
+            notBestWeight = 0;     
+        %end
+    end
+    iter = iter+1;
+end
+
+figure;
+plotconfusion(nn_test_quality,test_output);
+[c,cm] = confusion(nn_test_quality,test_output)
+
+%Verify using Matlab's pattern search to find minimum 
+%[x_hc_opt, err_hc] = patternsearch(h,[net.IW{1,1}]);
+end
+
+
+%%
+%Genetic Algorithm
+% inputs for the neural net
+
+if 0
+    
+nn_train_input = working_predictors(idx_test,:)';
+ga_input = nn_train_input;
+% targets for the neural net
+%ga_target = nn_train_output;
+qualIndices = vec2ind(nn_test_quality);
+ga_target = qualIndices;
+minmaxIn = minmax(ga_input);
+minmaxTar = minmax(ga_target);
+
+targets = ga_target(1,:); 
+[I N] = size(ga_input);
+[O N] = size(targets); 
+Neq = N*O;                                      % 699 No. of independent equations 
+[inputs, muin, stdin] = zscore(ga_input');   % Better for 'tansig' hidden activation 
+
+
+
+% For a feedforward MLP with an I-H-O (Input-Hidden-Output) 
+% node topology  the number of unknown weights is 
+ 
+% Hidden node upper bound (Neq > Nw) 
+
+Hub = -1+ceil((Neq-O)/(I+O+1)) ;     % 63 
+
+% To mitigate noise and measurement error, try to choose H 
+% so that Neq >> Nw 
+
+H = 10;                % MATLAB default (Also try smaller values) 
+Nw = (I+1)*H+(H+1)*O ;
+net = patternnet(H);       % For classification 
+net.layers{2}.transferFcn = 'logsig';  % For classification 
+net = configure(net, inputs(:,1), targets); 
+h = @(x)mse_test(x, net, inputs(:,1), targets); 
+%show the interative results
+ga_opts = gaoptimset('TolFun', 1e-2,'display','iter'); 
+[x_ga_opt, err_ga] = ga(h, Nw, ga_opts); 
+
+end
+% %Set the "random" initial weights to avoid getting slightly different
+% %results every time it runs
+% setdemorandstream(391418381)
+% % create a neural network (use the same feedforward pattern recognition network in Assignment 1)
+% net = patternnet(10);
+% n = (7+1)*10+(10+1)*6;
+% % configure the neural network for this dataset
+% net = configure(net, ga_input, ga_target);
+% % create handle to the MSE_TEST function, that
+% % calculates MSE
+% h = @(x) mse_test(x, net, ga_input, ga_target);
+% %
+% % Setting the Genetic Algorithms tolerance for
+% % minimum change in fitness function before
+% % terminating algorithm to 1e-8 and displaying
+% % each iteration's results.
+% ga_opts = gaoptimset('TolFun', 1e-8,'display','iter');
+% %
+% % PLEASE NOTE: For a feed-forward network
+% % with n neurons, 3n+1 quantities are required
+% % in the weights and biases column vector.
+% %
+% %
+% % running the genetic algorithm with desired options
+% [x_ga_opt, err_ga] = ga(h, n, ga_opts);
+% % figure;
+% plotconfusion(nn_test_quality,test_output);
+% [c,cm] = confusion(nn_test_quality,test_output)
+
+
+%%
+%Simulated Annealing
+nn_train_input = working_predictors(idx_test,:)';
+sa_input = nn_train_input;
+% targets for the neural net
+%ga_target = nn_train_output;
+qualIndices = vec2ind(nn_test_quality);
+sa_target = qualIndices;
+
+%set unbounded lower and upper bounds
+lb = 0.6;
+ub = inf;
+
+H = 10;                % MATLAB default (Also try smaller values) 
+net = feedforwardnet(H);       % For classification 
+net.layers{2}.transferFcn = 'logsig';  % For classification 
+%net.numInputs = 11;
+%net.numOutputs = 6;
+net = configure(net, nn_train_input(1,:), sa_target); 
+%net = configure(net, sa_input(:,1), sa_target); 
+h = @(x)mse_test(x, net, nn_train_input(1,:), sa_target); 
+%set initial weights and bias for input and output layer neurons
+rng('default');
+IW_input = ones(1,size(nn_train_input(1,:),1)*H)/(size(nn_train_input(1,:),1)*H);
+IW_output = ones(1,size(sa_target,1)*H)/(size(sa_target,1)*H);
+
+IB_input = rand(1,H);
+IB_output = rand(1,size(sa_target,1));
+
+initialMat = [IW_input IB_input IW_output IB_output];
+%show the interative results
+sa_opts = saoptimset('TolFun', 1e-2,'display','iter');
+
+[x_sa_opt, fval, exitFlag,output] = simulannealbnd(h, initialMat,lb,ub,sa_opts);
+fprintf('The number of iterations was : %d\n', output.iterations);
+fprintf('The number of function evaluations was : %d\n', output.funccount);
+
+fprintf('The best function value found was : %g\n', fval);
+options = optimoptions(@simulannealbnd, ...
+                     'PlotFcn',{@saplotbestf,@saplottemperature,@saplotf,@saplotstopping});
